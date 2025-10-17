@@ -1,4 +1,4 @@
-# Use official Python runtime
+# Use the Python runtime
 FROM python:3.10-slim
 
 # Set working directory
@@ -13,8 +13,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the app
 COPY . .
 
-# Expose port (not used in Socket Mode but required)
+# Expose port 
 EXPOSE 3000
 
-# Start Slackbot
+# Start the Slackbot
 CMD ["python", "app.py"]
