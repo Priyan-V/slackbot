@@ -3,6 +3,8 @@ import json
 import tempfile
 import base64
 from datetime import datetime
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -18,9 +20,7 @@ from reportlab.pdfgen import canvas
 import sendgrid
 from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
 
-
-# Environment setup
-
+# Load environment variables
 load_dotenv()
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
 SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")
@@ -28,12 +28,12 @@ SENDGRID_API_KEY = os.getenv("SENDGRID_API_KEY")
 VERIFIED_SENDER = os.getenv("VERIFIED_SENDER")
 
 # Initialize Slack and Supabase
-
 app = App(token=SLACK_BOT_TOKEN, signing_secret=os.getenv("SLACK_SIGNING_SECRET"))
 supabase: Client = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
+# PDF generator
 def generate_pdf(results):
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
     c = canvas.Canvas(temp_file.name, pagesize=letter)
@@ -65,7 +65,25 @@ def generate_pdf(results):
     return temp_file.name
 
 
-# Slack Commands
+# HTTP Server for Render port binding
+class DummyHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Slackbot running (Socket Mode)")
+
+def run_dummy_server():
+    port = int(os.environ.get("PORT", 3000))
+    server = HTTPServer(("0.0.0.0", port), DummyHandler)
+    print(f"🌐 Dummy HTTP server running on port {port}")
+    server.serve_forever()
+
+
+# Start dummy HTTP server in a separate thread
+threading.Thread(target=run_dummy_server, daemon=True).start()
+
+
+# ----- Slack Commands -----
 @app.command("/keywords")
 def handle_keywords(ack, body, say):
     ack("Processing your keywords...")
@@ -110,6 +128,7 @@ def group_keywords(ack, say):
     except Exception as e:
         say(f"⚠️ Error: {e}")
 
+
 @app.command("/setemail")
 def set_email(ack, body, say):
     ack("📧 Saving your email...")
@@ -124,12 +143,11 @@ def set_email(ack, body, say):
     except Exception as e:
         say(f"⚠️ Failed to save email: {e}")
 
+
 @app.command("/generateoutlines")
 def generate_outlines(ack, body, say):
     ack("🧩 Generating outlines...")
     user_id = body["user_id"]
-
-   
     response = supabase.table("keyword_groups").select("groups").order("created_at", desc=True).limit(1).execute()
     if not response.data:
         say("⚠️ No keyword groups found. Run /groupkeywords first.")
@@ -148,7 +166,6 @@ def generate_outlines(ack, body, say):
         idea = f"Create a blog post titled: 'Mastering {topic} — The Complete Guide'"
         results.append({"group": ", ".join(keywords), "outline": outline, "idea": idea})
 
-
     say("📘 *Generated Outlines:*")
     for res in results:
         outline_text = f"*Group:* {res['group']}\n🧠 *Idea:* {res['idea']}\n📄 *Outline:*\n{res['outline']}"
@@ -157,7 +174,7 @@ def generate_outlines(ack, body, say):
     pdf_path = generate_pdf(results)
     say("📄 PDF report generated!")
 
-    #Upload PDF to Slack DM
+    # Upload PDF to Slack DM
     try:
         dm = WebClient(token=SLACK_BOT_TOKEN).conversations_open(users=user_id)
         channel_id = dm["channel"]["id"]
@@ -180,35 +197,24 @@ def generate_outlines(ack, body, say):
             if not user_email:
                 say("📧 No email found for this user. Please run `/setemail your_email@example.com` first.")
             else:
-                import sendgrid
-                from sendgrid.helpers.mail import Mail, Attachment, FileContent, FileName, FileType, Disposition
-
                 sg = sendgrid.SendGridAPIClient(api_key=SENDGRID_API_KEY)
-
-               
                 with open(pdf_path, "rb") as f:
                     encoded = base64.b64encode(f.read()).decode()
-
-                
-                attachment = Attachment()
-                attachment.file_content = FileContent(encoded)
-                attachment.file_type = FileType("application/pdf")
-                attachment.file_name = FileName("ContentReport.pdf")
-                attachment.disposition = Disposition("attachment")
-
-                
+                attachment = Attachment(
+                    file_content=FileContent(encoded),
+                    file_type=FileType("application/pdf"),
+                    file_name=FileName("ContentReport.pdf"),
+                    disposition=Disposition("attachment")
+                )
                 msg = Mail(
                     from_email=VERIFIED_SENDER,
                     to_emails=user_email,
                     subject="Your Content Report",
-                    html_content="<strong>Your content report is attached.</strong>"
+                    html_content="<strong>Your content report is attached.</strong>",
+                    attachments=[attachment]
                 )
-                msg.attachment = attachment
-
-                
                 response = sg.send(msg)
                 say(f"✉️ Email successfully sent to {user_email} (Status: {response.status_code})")
-
         except Exception as e:
             say(f"⚠️ Email send error: {e}")
     else:
@@ -219,7 +225,6 @@ def generate_outlines(ack, body, say):
         "created_at": datetime.utcnow().isoformat()
     }).execute()
     print("[INFO] Outlines saved to Supabase.")
-
 
 
 @app.command("/history")
@@ -234,7 +239,8 @@ def history(ack, body, say):
         message += f"\n• {r['created_at']}: {', '.join([x['group'] for x in r['results']])}"
     say(message)
 
+
 # Entry point
 if __name__ == "__main__":
-    print("🚀 Starting Slackbot...")
+    print("🚀 Starting Slackbot in Socket Mode...")
     SocketModeHandler(app, SLACK_APP_TOKEN).start()
