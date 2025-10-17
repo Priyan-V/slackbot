@@ -9,7 +9,7 @@ COPY requirements.txt .
 
 # Install dependencies
 RUN pip install --upgrade pip
-RUN pip install --no-cache-dir --use-deprecated=legacy-resolver -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy the app
 COPY . .
