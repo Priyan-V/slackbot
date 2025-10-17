@@ -1,10 +1,10 @@
-# Use official Python runtime
+# Use officia Python runtime
 FROM python:3.10-slim
 
 # Set working directory
 WORKDIR /app
 
-# Copy dependencies
+# Copy required dependencies
 COPY requirements.txt .
 
 # Install dependencies
@@ -16,5 +16,6 @@ COPY . .
 # Expose port (not used in Socket Mode but required)
 EXPOSE 3000
 
-# Start Slackbot
+# Start the Slackbot
 CMD ["python", "app.py"]
+
